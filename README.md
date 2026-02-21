@@ -1,61 +1,157 @@
-# EAS 510 Assignment 1: Digital Forensics Apprentice
+```markdown
+# Digital Forensics Apprentice (Rule-Based Image Matcher)
 
-Dataset for building a rule-based expert system that matches modified images back to their originals.
+This repository contains my EAS 510 “Digital Forensics Detective” prototype. It is a rule-based expert system that attempts to match modified images back to their original source image using simple handcrafted rules. The system does not use machine learning; instead it combines multiple image comparison rules and scoring logic to make a decision.
 
-## Dataset Structure
+---
+
+## Project Structure
 
 ```
-EAS510_Assignment1/
-├── originals/        # 10 original JPEG images
-├── modified_images/  # 60 "easy" cases (single transformations)
-├── hard/             # 60 "hard" cases (combined transformations)
-└── random/           # 15 unrelated images (should be rejected)
-```
 
-## Transformations
+Digital-Forensic-Classifier/
+├── forensics_detective.py   # main script (runs the detective)
+├── rules.py                 # expert system rules + helper functions
+├── README.md
+├── originals/               # 10 original reference images
+├── modified_images/         # easy test set (single transformations)
+├── hard/                    # hard test set (combined transformations)
+└── random/                  # unrelated images + noise (should be rejected)
 
-### Easy Cases (modified_images/)
-Each original has 6 modifications:
+````
+
+---
+
+## What This System Does
+
+When the script runs:
+
+1. It loads all images in `originals/` and registers them as targets.
+2. It computes simple image signatures for each original:
+   - file size
+   - whole-image perceptual hash (dHash)
+   - center-crop hashes (75%, 50%, 25%)
+   - tiny 32×32 grayscale thumbnails for crop comparison
+3. The user chooses which test folder to run:
+   - modified_images (easy)
+   - hard
+   - random
+4. Each test image is compared against every original.
+5. Scores from multiple rules are combined to determine the best match or rejection.
+
+The output prints transparent reasoning so you can see how each rule contributed to the final decision.
+
+---
+
+## Expert System Rules
+
+### Rule 1 — Metadata Comparison
+Compares file size between the input image and each target image.
+
+### Rule 2 — Whole Image dHash
+Uses perceptual hashing to compare overall image structure even if compression or brightness changes occur.
+
+### Rule 3 — Center Crop Matching
+Compares hashes from cropped regions to detect strong center crops (25%, 50%, 75%).
+
+### Rule 4 — Tiny Thumbnail Comparison
+Creates small grayscale thumbnails and compares pixel differences to estimate similarity.
+
+---
+
+## Dataset Description
+
+### originals/
+10 original JPEG images used as the reference database.
+
+### modified_images/ (Easy Cases)
+Each original has simple single transformations such as:
 - Brightness enhancement
 - JPEG compression
-- 25% crop (center)
-- 50% crop (center)
-- 75% crop (center)
-- PNG format conversion
+- 25% center crop
+- 50% center crop
+- 75% center crop
+- PNG conversion
 
-### Hard Cases (hard/)
-Each original has 6 challenging modifications:
-- **v1**: Off-center crop + compression
-- **v2**: Crop + brightness + compression
-- **v3**: Resize + compression
-- **v4**: Rotation + compression
-- **v5**: Contrast + compression
-- **v6**: Crop + resize + compression
+### hard/ (Hard Cases)
+Each original has combined transformations, for example:
+- Off-center crop + compression
+- Crop + brightness + compression
+- Resize + compression
+- Rotation + compression
+- Contrast + compression
+- Crop + resize + compression
 
-## Ground Truth
+### random/
+Images that are not related to any original.  
+The system should normally reject these.
 
-The filename prefix indicates which original each image was derived from:
-- `modified_03_brightness.jpg` → `original_03.jpg`
-- `original_03__rotate6deg__compress__q50__v4.jpg` → `original_03.jpg`
-
-Images in `random/` are not derived from any original and should be rejected.
+---
 
 ## Setup
 
+Install dependencies:
+
 ```bash
 pip install pillow opencv-python numpy
-```
+````
 
-## Usage
+---
 
-Clone this repository and use the images to build and test your forensic matching system:
+## Running the Project
+
+From the project folder:
 
 ```bash
-git clone https://github.com/delveccj/EAS510_Assignment1.git
-cd EAS510_Assignment1
+python forensics_detective.py
 ```
 
-Your system should:
-1. Register the 10 original images
-2. For each test image, determine which original it came from (or reject it)
-3. Display transparent reasoning showing how each rule contributed to the decision
+The script will ask:
+
+```
+Choose test folder:
+1 - modified_images (easy)
+2 - hard
+3 - random
+Enter choice (1/2/3):
+```
+
+After selection, the program processes all images in that folder.
+
+---
+
+## Example Output
+
+The system prints reasoning like:
+
+```
+Processing: modified_00_crop_50pct.jpg
+  Rule 1: Size ratio ...
+  Rule 2: dHash similarity ...
+  Rule 3: crop similarity ...
+  Rule 4: tiny thumbnail difference ...
+  Total score: XX/30
+Final: MATCH / REJECTED
+```
+
+---
+
+## Ground Truth
+
+File names indicate the original source image:
+
+* `modified_03_*` → `original_03.jpg`
+* `original_03__rotate...__v4.jpg` → `original_03.jpg`
+
+Images in `random/` are unrelated and should be rejected.
+
+---
+
+## Notes
+
+This is intentionally a beginner-style expert system prototype.
+The focus is on transparent rule-based reasoning rather than perfect accuracy or machine learning.
+
+```
+::contentReference[oaicite:0]{index=0}
+```
