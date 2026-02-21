@@ -1,14 +1,12 @@
-```markdown
 # Digital Forensics Apprentice (Rule-Based Image Matcher)
 
-This repository contains my EAS 510 “Digital Forensics Detective” prototype. It is a rule-based expert system that attempts to match modified images back to their original source image using simple handcrafted rules. The system does not use machine learning; instead it combines multiple image comparison rules and scoring logic to make a decision.
+This repository contains my EAS 510 “Digital Forensics Detective” prototype. It is a rule-based expert system that attempts to match modified images back to their original source image using simple handcrafted rules. The system does not use machine learning; instead, it combines multiple image comparison rules and scoring logic to make a decision.
 
 ---
 
 ## Project Structure
 
 ```
-
 Digital-Forensic-Classifier/
 ├── forensics_detective.py   # main script (runs the detective)
 ├── rules.py                 # expert system rules + helper functions
@@ -17,8 +15,7 @@ Digital-Forensic-Classifier/
 ├── modified_images/         # easy test set (single transformations)
 ├── hard/                    # hard test set (combined transformations)
 └── random/                  # unrelated images + noise (should be rejected)
-
-````
+```
 
 ---
 
@@ -33,9 +30,9 @@ When the script runs:
    - center-crop hashes (75%, 50%, 25%)
    - tiny 32×32 grayscale thumbnails for crop comparison
 3. The user chooses which test folder to run:
-   - modified_images (easy)
-   - hard
-   - random
+   - `modified_images` (easy)
+   - `hard`
+   - `random`
 4. Each test image is compared against every original.
 5. Scores from multiple rules are combined to determine the best match or rejection.
 
@@ -49,7 +46,7 @@ The output prints transparent reasoning so you can see how each rule contributed
 Compares file size between the input image and each target image.
 
 ### Rule 2 — Whole Image dHash
-Uses perceptual hashing to compare overall image structure even if compression or brightness changes occur.
+Uses perceptual hashing to compare overall image structure, even if compression or brightness changes occur.
 
 ### Rule 3 — Center Crop Matching
 Compares hashes from cropped regions to detect strong center crops (25%, 50%, 75%).
@@ -61,10 +58,10 @@ Creates small grayscale thumbnails and compares pixel differences to estimate si
 
 ## Dataset Description
 
-### originals/
+### `originals/`
 10 original JPEG images used as the reference database.
 
-### modified_images/ (Easy Cases)
+### `modified_images/` (Easy Cases)
 Each original has simple single transformations such as:
 - Brightness enhancement
 - JPEG compression
@@ -73,7 +70,7 @@ Each original has simple single transformations such as:
 - 75% center crop
 - PNG conversion
 
-### hard/ (Hard Cases)
+### `hard/` (Hard Cases)
 Each original has combined transformations, for example:
 - Off-center crop + compression
 - Crop + brightness + compression
@@ -82,7 +79,7 @@ Each original has combined transformations, for example:
 - Contrast + compression
 - Crop + resize + compression
 
-### random/
+### `random/`
 Images that are not related to any original.  
 The system should normally reject these.
 
@@ -94,7 +91,7 @@ Install dependencies:
 
 ```bash
 pip install pillow opencv-python numpy
-````
+```
 
 ---
 
@@ -128,8 +125,8 @@ The system prints reasoning like:
 Processing: modified_00_crop_50pct.jpg
   Rule 1: Size ratio ...
   Rule 2: dHash similarity ...
-  Rule 3: crop similarity ...
-  Rule 4: tiny thumbnail difference ...
+  Rule 3: Crop similarity ...
+  Rule 4: Tiny thumbnail difference ...
   Total score: XX/30
 Final: MATCH / REJECTED
 ```
@@ -140,8 +137,8 @@ Final: MATCH / REJECTED
 
 File names indicate the original source image:
 
-* `modified_03_*` → `original_03.jpg`
-* `original_03__rotate...__v4.jpg` → `original_03.jpg`
+- `modified_03_*` → `original_03.jpg`
+- `original_03__rotate...__v4.jpg` → `original_03.jpg`
 
 Images in `random/` are unrelated and should be rejected.
 
@@ -149,9 +146,5 @@ Images in `random/` are unrelated and should be rejected.
 
 ## Notes
 
-This is intentionally a beginner-style expert system prototype.
+This is intentionally a beginner-style expert system prototype.  
 The focus is on transparent rule-based reasoning rather than perfect accuracy or machine learning.
-
-```
-::contentReference[oaicite:0]{index=0}
-```
