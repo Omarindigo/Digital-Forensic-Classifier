@@ -144,7 +144,4 @@ Images in `random/` are unrelated and should be rejected.
 
 ---
 
-## Notes
 
-This is intentionally a beginner-style expert system prototype.  
-The focus is on transparent rule-based reasoning rather than perfect accuracy or machine learning.
