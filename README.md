@@ -1,6 +1,6 @@
 # Digital Forensics Apprentice (Rule-Based Image Matcher)
 
-This repository contains my EAS 510 “Digital Forensics Detective” prototype. It is a rule-based expert system that attempts to match modified images back to their original source image using simple handcrafted rules. The system does not use machine learning; instead, it combines multiple image comparison rules and scoring logic to make a decision.
+This repository contains my “Digital Forensics Detective” prototype. It is a rule-based expert system that attempts to match modified images back to their original source image using simple handcrafted rules. The system does not use machine learning; instead, it combines multiple image comparison rules and scoring logic to make a decision.
 
 ---
 
