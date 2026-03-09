@@ -1,147 +1,177 @@
-# Digital Forensics Apprentice (Rule-Based Image Matcher)
+# Digital Forensic Classifier
 
-This repository contains my “Digital Forensics Detective” prototype. It is a rule-based expert system that attempts to match modified images back to their original source image using simple handcrafted rules. The system does not use machine learning; instead, it combines multiple image comparison rules and scoring logic to make a decision.
+This repository contains a rule-based image comparison system developed for **EAS 510: Basics of AI – Assignment 1: Digital Forensics Apprentice**. The goal of the project is to identify which original image a modified image was derived from using a transparent expert-system approach rather than machine learning.
+
+The system evaluates evidence from multiple rules and assigns a confidence score indicating how strongly an input image matches one of the known originals. Each rule contributes evidence that is printed in the output so the reasoning behind every decision is visible.
 
 ---
 
-## Project Structure
+## Repository Structure
 
 ```
 Digital-Forensic-Classifier/
-├── forensics_detective.py   # main script (runs the detective)
-├── rules.py                 # expert system rules + helper functions
-├── README.md
-├── originals/               # 10 original reference images
-├── modified_images/         # easy test set (single transformations)
-├── hard/                    # hard test set (combined transformations)
-└── random/                  # unrelated images + noise (should be rejected)
+├── originals/              # 10 original reference images
+├── modified_images/        # easier transformations
+├── hard/                   # harder transformations
+├── random/                 # unrelated images that should be rejected
+├── forensics_detective.py  # main expert system class
+├── rules.py                # rule implementations for Version 1
+├── rules_v2.py             # extended rule set for Version 2
+├── test_system.py          # script used to run the system
+├── results_v1.txt          # output from Version 1 (easy + random)
+├── results_v1_hard.txt     # output from Version 1 on hard cases
+├── results_v2.txt          # output from Version 2 evaluation
+├── requirements.txt
+└── README.md
 ```
 
 ---
 
-## What This System Does
+## Project Overview
 
-When the script runs:
+The classifier works by registering a set of **original images** as targets. Each image is analyzed to extract simple visual signatures such as metadata information, color distributions, and grayscale structures.
 
-1. It loads all images in `originals/` and registers them as targets.
-2. It computes simple image signatures for each original:
-   - file size
-   - whole-image perceptual hash (dHash)
-   - center-crop hashes (75%, 50%, 25%)
-   - tiny 32×32 grayscale thumbnails for crop comparison
-3. The user chooses which test folder to run:
-   - `modified_images` (easy)
-   - `hard`
-   - `random`
-4. Each test image is compared against every original.
-5. Scores from multiple rules are combined to determine the best match or rejection.
+When a modified image is tested, the system compares it against every original using the defined rules. Each rule produces a score and explanation. The scores are combined into a final confidence value that determines whether the system considers the image a match or rejects it.
 
-The output prints transparent reasoning so you can see how each rule contributed to the final decision.
+This approach follows the style of **early AI expert systems**, where reasoning is explicit and interpretable rather than learned through statistical models.
 
 ---
 
-## Expert System Rules
+## Version 1 Rules
 
-### Rule 1 — Metadata Comparison
-Compares file size between the input image and each target image.
+Version 1 implements the three required expert system rules from the assignment.
 
-### Rule 2 — Whole Image dHash
-Uses perceptual hashing to compare overall image structure, even if compression or brightness changes occur.
+### Rule 1 — Metadata Analysis
 
-### Rule 3 — Center Crop Matching
-Compares hashes from cropped regions to detect strong center crops (25%, 50%, 75%).
+This rule compares properties such as:
 
-### Rule 4 — Tiny Thumbnail Comparison
-Creates small grayscale thumbnails and compares pixel differences to estimate similarity.
+* file size
+* image width and height
+* aspect ratio
 
----
-
-## Dataset Description
-
-### `originals/`
-10 original JPEG images used as the reference database.
-
-### `modified_images/` (Easy Cases)
-Each original has simple single transformations such as:
-- Brightness enhancement
-- JPEG compression
-- 25% center crop
-- 50% center crop
-- 75% center crop
-- PNG conversion
-
-### `hard/` (Hard Cases)
-Each original has combined transformations, for example:
-- Off-center crop + compression
-- Crop + brightness + compression
-- Resize + compression
-- Rotation + compression
-- Contrast + compression
-- Crop + resize + compression
-
-### `random/`
-Images that are not related to any original.  
-The system should normally reject these.
+These properties often remain partially related even after transformations such as cropping, compression, or format conversion. The rule calculates ratios between the input image and each original and converts them into a confidence score.
 
 ---
 
-## Setup
+### Rule 2 — Color Histogram Comparison
 
-Install dependencies:
+This rule compares the color distribution of images.
 
-```bash
-pip install pillow opencv-python numpy
+A histogram is computed for each color channel using OpenCV and normalized. The histograms of the input image and target image are compared using correlation. Similar color distributions produce higher scores.
+
+Histogram comparison is useful because it remains informative even when images are spatially modified.
+
+---
+
+### Rule 3 — Template Matching
+
+This rule estimates whether one image may visually appear inside another.
+
+The system uses OpenCV's `matchTemplate` method to compare grayscale images and compute a similarity score. To improve speed, images are resized before matching.
+
+This rule is especially useful for identifying cropped images derived from the originals.
+
+---
+
+## Version 2 Improvement
+
+After evaluating Version 1 on the **hard dataset**, an additional rule is introduced.
+
+### Rule 4 — ORB Keypoint Matching
+
+This rule uses ORB feature detection to compare distinctive local features between images.
+
+Keypoints are extracted from both images and matched using a Hamming distance matcher. The number of good matches relative to detected features becomes the similarity score.
+
+This rule improves robustness against transformations such as:
+
+* resizing
+* compression
+* rotation
+* combined transformations
+
+---
+
+## Installation
+
+Install dependencies using pip:
+
+```
+pip install -r requirements.txt
+```
+
+The project primarily relies on:
+
+* OpenCV
+* NumPy
+* Pillow
+
+---
+
+## Running the System
+
+From the project directory run:
+
+```
+python test_system.py
+```
+
+The script will:
+
+1. load the original images
+2. run Version 1 on easy cases and random images
+3. run Version 1 on hard cases
+4. run Version 2 on all datasets
+5. save the results into text files
+
+---
+
+## Output Files
+
+Three output files are generated:
+
+```
+results_v1.txt
+results_v1_hard.txt
+results_v2.txt
+```
+
+Each file contains the full reasoning output for every image, including which rules fired and how many points they contributed.
+
+Example output format:
+
+```
+Processing: modified_image_01.jpg
+Rule 1 (Metadata): FIRED - Size ratio 0.85 -> 20/30 points
+Rule 2 (Histogram): FIRED - Correlation 0.92 -> 25/30 points
+Rule 3 (Template): FIRED - Match score 0.76 -> 30/40 points
+Final Score: 75/100 -> MATCH to original_03.jpg
 ```
 
 ---
 
-## Running the Project
+## Evaluation
 
-From the project folder:
+The system is evaluated in two ways:
 
-```bash
-python forensics_detective.py
-```
+**Accuracy on modified images**
 
-The script will ask:
+Measures how often the system correctly identifies the original source.
 
-```
-Choose test folder:
-1 - modified_images (easy)
-2 - hard
-3 - random
-Enter choice (1/2/3):
-```
+**False positive rate on random images**
 
-After selection, the program processes all images in that folder.
+Measures how often unrelated images are incorrectly classified as matches.
+
+The random dataset should ideally produce a **0% false positive rate**.
 
 ---
 
-## Example Output
+## Notes
 
-The system prints reasoning like:
-
-```
-Processing: modified_00_crop_50pct.jpg
-  Rule 1: Size ratio ...
-  Rule 2: dHash similarity ...
-  Rule 3: Crop similarity ...
-  Rule 4: Tiny thumbnail difference ...
-  Total score: XX/30
-Final: MATCH / REJECTED
-```
+The purpose of the project is not perfect classification accuracy. The objective is to demonstrate how rule-based reasoning systems operate and how they can be iteratively improved by analyzing failures and refining rules.
 
 ---
 
-## Ground Truth
+## License
 
-File names indicate the original source image:
-
-- `modified_03_*` → `original_03.jpg`
-- `original_03__rotate...__v4.jpg` → `original_03.jpg`
-
-Images in `random/` are unrelated and should be rejected.
-
----
-
-
+Apache-2.0 License

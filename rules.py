@@ -1,167 +1,216 @@
 import os
+from typing import Dict, Any
+
 import cv2
 import numpy as np
-
-print("loading rules")
-
-
-_last_path = None
-_last_gray = None
-
-def _load_gray(path):
-    """
-    Load image once and reuse it if the same path
-    is requested repeatedly.
-    """
-    global _last_path, _last_gray
-
-    if path == _last_path and _last_gray is not None:
-        return _last_gray
-
-    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-
-    _last_path = path
-    _last_gray = img
-
-    return img
+from PIL import Image
 
 
-def _dhash(gray, size=8):
-    if gray is None:
-        return 0
-
-    small = cv2.resize(gray, (size + 1, size), interpolation=cv2.INTER_AREA)
-    diff = small[:, :-1] > small[:, 1:]
-
-    h = 0
-    bit = 0
-    for r in range(size):
-        for c in range(size):
-            if diff[r, c]:
-                h |= (1 << bit)
-            bit += 1
-    return h
+MATCH_THRESHOLD = 50
 
 
-def _hamming(a, b):
-    return (a ^ b).bit_count()
+def _safe_read_color(path: str):
+    return cv2.imread(path, cv2.IMREAD_COLOR)
 
 
-def _center_crop(gray, keep=0.75):
-    if gray is None:
-        return None
-    if keep >= 0.999:
-        return gray
-
-    h, w = gray.shape[:2]
-    new_w = max(1, int(w * keep))
-    new_h = max(1, int(h * keep))
-
-    x0 = (w - new_w) // 2
-    y0 = (h - new_h) // 2
-    return gray[y0:y0+new_h, x0:x0+new_w]
+def _safe_read_gray(path: str):
+    return cv2.imread(path, cv2.IMREAD_GRAYSCALE)
 
 
-def _tiny(gray, w=32, h=32):
-    if gray is None:
-        return None
-    return cv2.resize(gray, (w, h), interpolation=cv2.INTER_AREA)
+def _pil_size(path: str):
+    with Image.open(path) as img:
+        return img.size  # (width, height)
 
 
-def _mean_abs_diff(a, b):
-    if a is None or b is None:
-        return 255.0
-    diff = cv2.absdiff(a, b)
-    return float(np.mean(diff))
+def _aspect_ratio(width: int, height: int) -> float:
+    if height == 0:
+        return 0.0
+    return width / float(height)
 
 
-# Functions of rules
+def _compute_histogram_bgr(image_bgr):
+    hist_b = cv2.calcHist([image_bgr], [0], None, [32], [0, 256])
+    hist_g = cv2.calcHist([image_bgr], [1], None, [32], [0, 256])
+    hist_r = cv2.calcHist([image_bgr], [2], None, [32], [0, 256])
 
-def rule1_metadata(target_info, input_path):
-    input_size = os.path.getsize(input_path)
-    target_size = target_info['size']
+    hist = np.vstack([hist_b, hist_g, hist_r]).astype("float32")
+    hist = cv2.normalize(hist, hist).flatten()
+    return hist
 
-    if target_size > 0 and input_size > 0:
-        ratio = min(input_size, target_size) / max(input_size, target_size)
+
+def _template_match_score(img_a_gray, img_b_gray) -> float:
+    if img_a_gray is None or img_b_gray is None:
+        return 0.0
+
+    h1, w1 = img_a_gray.shape[:2]
+    h2, w2 = img_b_gray.shape[:2]
+
+    if h1 == 0 or w1 == 0 or h2 == 0 or w2 == 0:
+        return 0.0
+
+    max_dim = 256
+
+    def resize_if_needed(img):
+        h, w = img.shape[:2]
+        scale = min(max_dim / max(h, w), 1.0)
+        if scale < 1.0:
+            new_w = max(1, int(w * scale))
+            new_h = max(1, int(h * scale))
+            return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        return img
+
+    img_a_gray = resize_if_needed(img_a_gray)
+    img_b_gray = resize_if_needed(img_b_gray)
+
+    h1, w1 = img_a_gray.shape[:2]
+    h2, w2 = img_b_gray.shape[:2]
+
+    area1 = h1 * w1
+    area2 = h2 * w2
+
+    if area1 <= area2:
+        template = img_a_gray
+        search = img_b_gray
     else:
-        ratio = 0
+        template = img_b_gray
+        search = img_a_gray
 
-    score = int(ratio * 10)
-    fired = ratio > 0.5
-    evidence = f"Size ratio {ratio:.2f}"
-    return score, fired, evidence
+    th, tw = template.shape[:2]
+    sh, sw = search.shape[:2]
 
+    if th > sh or tw > sw:
+        return 0.0
 
-def rule2_dhash_whole(target_info, input_path):
-    gray = _load_gray(input_path)
-    h_in = _dhash(gray)
-
-    h_t = target_info['dhash_whole']
-    dist = _hamming(h_in, h_t)
-
-    sim = 1.0 - (dist / 64.0)
-    if sim < 0:
-        sim = 0
-
-    score = int(sim * 15)
-    fired = sim > 0.70
-    evidence = f"dHash sim {sim:.2f} (dist {dist})"
-    return score, fired, evidence
+    result = cv2.matchTemplate(search, template, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, _ = cv2.minMaxLoc(result)
+    return float(max_val)
 
 
-def rule3_dhash_center_crop(target_info, input_path):
-    gray = _load_gray(input_path)
-    h_in = _dhash(gray)
+def build_target_signature(path: str) -> Dict[str, Any]:
+    image_bgr = _safe_read_color(path)
+    image_gray = _safe_read_gray(path)
+    width, height = _pil_size(path)
+    file_size = os.path.getsize(path)
 
-    best_sim = 0.0
-    best_keep = None
-
-    for k in [0.75, 0.50, 0.25]:
-        if k == 0.75:
-            h_t = target_info['dhash_crop75']
-        elif k == 0.50:
-            h_t = target_info['dhash_crop50']
-        else:
-            h_t = target_info['dhash_crop25']
-
-        dist = _hamming(h_in, h_t)
-        sim = 1.0 - (dist / 64.0)
-        if sim < 0:
-            sim = 0
-
-        if sim > best_sim:
-            best_sim = sim
-            best_keep = k
-
-    score = int(best_sim * 5)
-    fired = best_sim > 0.60
-    evidence = f"input vs target keep {best_keep} sim {best_sim:.2f}"
-    return score, fired, evidence
+    return {
+        "path": path,
+        "file_size": file_size,
+        "width": width,
+        "height": height,
+        "aspect_ratio": _aspect_ratio(width, height),
+        "histogram": _compute_histogram_bgr(image_bgr) if image_bgr is not None else None,
+        "gray": image_gray,
+    }
 
 
-def rule4_tiny_compare(target_info, input_path):
-    gray_in = _load_gray(input_path)
-    inp_t = _tiny(gray_in)
+def build_input_signature(path: str) -> Dict[str, Any]:
+    image_bgr = _safe_read_color(path)
+    image_gray = _safe_read_gray(path)
+    width, height = _pil_size(path)
+    file_size = os.path.getsize(path)
 
-    best_score = 0
-    best_keep = None
-    best_mad = None
+    return {
+        "path": path,
+        "file_size": file_size,
+        "width": width,
+        "height": height,
+        "aspect_ratio": _aspect_ratio(width, height),
+        "histogram": _compute_histogram_bgr(image_bgr) if image_bgr is not None else None,
+        "gray": image_gray,
+    }
 
-    for k in [0.75, 0.5, 0.25]:
-        tgt_t = target_info["tiny_keep"][k]
 
-        mad = _mean_abs_diff(inp_t, tgt_t)
-        sim = 1.0 - (mad / 255.0)
-        if sim < 0:
-            sim = 0
+def rule1_metadata(target_info: Dict[str, Any], input_info: Dict[str, Any]) -> Dict[str, Any]:
+    t_size = target_info["file_size"]
+    i_size = input_info["file_size"]
 
-        score = int(sim * 5)
+    size_ratio = min(t_size, i_size) / max(t_size, i_size) if max(t_size, i_size) > 0 else 0.0
 
-        if score > best_score:
-            best_score = score
-            best_keep = k
-            best_mad = mad
+    t_w, t_h = target_info["width"], target_info["height"]
+    i_w, i_h = input_info["width"], input_info["height"]
 
-    fired = best_score >= 3
-    evidence = f"input vs target keep {best_keep} mad {best_mad:.1f}"
-    return best_score, fired, evidence
+    width_ratio = min(t_w, i_w) / max(t_w, i_w) if max(t_w, i_w) > 0 else 0.0
+    height_ratio = min(t_h, i_h) / max(t_h, i_h) if max(t_h, i_h) > 0 else 0.0
+
+    t_ar = target_info["aspect_ratio"]
+    i_ar = input_info["aspect_ratio"]
+    aspect_ratio_similarity = min(t_ar, i_ar) / max(t_ar, i_ar) if max(t_ar, i_ar) > 0 else 0.0
+
+    combined = (0.4 * size_ratio) + (0.3 * width_ratio) + (0.2 * height_ratio) + (0.1 * aspect_ratio_similarity)
+    score = int(round(combined * 30))
+    score = max(0, min(30, score))
+
+    fired = score >= 15
+    status = "FIRED" if fired else "NO MATCH"
+
+    line = (
+        f"Rule 1 (Metadata): {status} - "
+        f"Size ratio {size_ratio:.2f}, Dimension ratio {((width_ratio + height_ratio) / 2):.2f} "
+        f"-> {score}/30 points"
+    )
+
+    return {
+        "name": "Rule 1 (Metadata)",
+        "score": score,
+        "fired": fired,
+        "line": line,
+        "size_ratio": size_ratio,
+        "width_ratio": width_ratio,
+        "height_ratio": height_ratio,
+        "aspect_ratio_similarity": aspect_ratio_similarity,
+    }
+
+
+def rule2_histogram(target_info: Dict[str, Any], input_info: Dict[str, Any]) -> Dict[str, Any]:
+    t_hist = target_info["histogram"]
+    i_hist = input_info["histogram"]
+
+    correlation = 0.0
+    if t_hist is not None and i_hist is not None:
+        correlation = float(
+            cv2.compareHist(
+                t_hist.astype("float32"),
+                i_hist.astype("float32"),
+                cv2.HISTCMP_CORREL
+            )
+        )
+
+    normalized = (correlation + 1.0) / 2.0
+    normalized = max(0.0, min(1.0, normalized))
+
+    score = int(round(normalized * 30))
+    score = max(0, min(30, score))
+
+    fired = score >= 15
+    status = "FIRED" if fired else "NO MATCH"
+
+    line = f"Rule 2 (Histogram): {status} - Correlation {correlation:.2f} -> {score}/30 points"
+
+    return {
+        "name": "Rule 2 (Histogram)",
+        "score": score,
+        "fired": fired,
+        "line": line,
+        "correlation": correlation,
+    }
+
+
+def rule3_template(target_info: Dict[str, Any], input_info: Dict[str, Any]) -> Dict[str, Any]:
+    match_score = _template_match_score(target_info["gray"], input_info["gray"])
+    match_score = max(0.0, min(1.0, match_score))
+
+    score = int(round(match_score * 40))
+    score = max(0, min(40, score))
+
+    fired = score >= 20
+    status = "FIRED" if fired else "NO MATCH"
+
+    line = f"Rule 3 (Template): {status} - Match score {match_score:.2f} -> {score}/40 points"
+
+    return {
+        "name": "Rule 3 (Template)",
+        "score": score,
+        "fired": fired,
+        "line": line,
+        "match_score": match_score,
+    }

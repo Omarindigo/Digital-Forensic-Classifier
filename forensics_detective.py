@@ -1,173 +1,178 @@
 import os
-import cv2
+from typing import Dict, Any, List, Optional
 
-from rules import (
-    rule1_metadata,
-    rule2_dhash_whole,
-    rule3_dhash_center_crop,
-    rule4_tiny_compare,
-    _load_gray,
-    _dhash,
-    _center_crop,
-)
 
 class SimpleDetective:
+    def __init__(self, rules_module):
+        self.targets: Dict[str, Dict[str, Any]] = {}
+        self.rules = rules_module
 
-    def __init__(self):
+    def register_targets(self, folder: str) -> None:
         self.targets = {}
+        print(f"Loading originals from: {folder}")
 
-    def register_targets(self, folder):
-        print(f"Loading targets from: {folder}")
+        for filename in sorted(os.listdir(folder)):
+            if not filename.lower().endswith((".jpg", ".jpeg", ".png")):
+                continue
 
-        for filename in os.listdir(folder):
-            if filename.endswith(('.jpg', '.jpeg', '.png')):
-                filepath = os.path.join(folder, filename)
-                file_size = os.path.getsize(filepath)
+            filepath = os.path.join(folder, filename)
+            signature = self.rules.build_target_signature(filepath)
 
-                gray = _load_gray(filepath)
+            self.targets[filename] = {
+                "filename": filename,
+                "path": filepath,
+                **signature,
+            }
 
-                dh_whole = _dhash(gray)
-                dh_crop75 = _dhash(_center_crop(gray, 0.75))
-                dh_crop50 = _dhash(_center_crop(gray, 0.50))
-                dh_crop25 = _dhash(_center_crop(gray, 0.25))
+            print(f"Registered target: {filename}")
 
-                # tiny thumbnails for target crops
-                tiny_keep = {}
-                for k in [0.75, 0.5, 0.25]:
-                    tgray = _center_crop(gray, keep=k)
-                    tiny_keep[k] = cv2.resize(tgray, (32, 32), interpolation=cv2.INTER_AREA)
+        print(f"Total targets loaded: {len(self.targets)}")
 
-                self.targets[filename] = {
-                    'path': filepath,
-                    'size': file_size,
-                    'dhash_whole': dh_whole,
-                    'dhash_crop75': dh_crop75,
-                    'dhash_crop50': dh_crop50,
-                    'dhash_crop25': dh_crop25,
-                    'tiny_keep': tiny_keep
-                }
+    def find_best_match(self, input_image_path: str) -> Dict[str, Any]:
+        input_signature = self.rules.build_input_signature(input_image_path)
+        input_name = os.path.basename(input_image_path)
 
-                print(f"  Registered: {filename} ({file_size} bytes)")
-
-        print(f"Total targets: {len(self.targets)}")
-
-    def find_best_match(self, input_image_path):
-        print(f"\nProcessing: {os.path.basename(input_image_path)}")
-        results = []
+        candidate_results: List[Dict[str, Any]] = []
 
         for target_name, target_info in self.targets.items():
+            r1 = self.rules.rule1_metadata(target_info, input_signature)
+            r2 = self.rules.rule2_histogram(target_info, input_signature)
+            r3 = self.rules.rule3_template(target_info, input_signature)
 
-            s1, _, e1 = rule1_metadata(target_info, input_image_path)
-            s2, _, e2 = rule2_dhash_whole(target_info, input_image_path)
-            s3, _, e3 = rule3_dhash_center_crop(target_info, input_image_path)
-            s4, _, e4 = rule4_tiny_compare(target_info, input_image_path)
+            total_score = r1["score"] + r2["score"] + r3["score"]
+            rules_used = [r1, r2, r3]
 
-            # keep raw crop score for a simple "strong crop match" check
-            s3_raw = s3  # rule3 is 0..5
+            if hasattr(self.rules, "rule4_extra"):
+                r4 = self.rules.rule4_extra(target_info, input_signature)
+                total_score += r4["score"]
+                rules_used.append(r4)
 
-            # keep total around /30 (simple re-weight)
-            s1 = int(s1 * 0.5)         # 0..5-ish
-            s2 = int(s2 * (10/15))     # 0..10-ish
-            # s3 stays 0..5
-            # s4 stays 0..5
-
-            total = s1 + s2 + s3 + s4
-
-            results.append({
+            candidate_results.append({
                 "target": target_name,
-                "score": total,
-                "s3_raw": s3_raw,
-                "e1": e1,
-                "e2": e2,
-                "e3": e3,
-                "e4": e4
+                "score": total_score,
+                "rules": rules_used
             })
 
-        results.sort(key=lambda x: x["score"], reverse=True)
-        best = results[0]
+        candidate_results.sort(key=lambda x: x["score"], reverse=True)
+        best = candidate_results[0]
 
-        print(f"  Rule 1: {best['e1']}")
-        print(f"  Rule 2: {best['e2']}")
-        print(f"  Rule 3: {best['e3']}")
-        print(f"  Rule 4: {best['e4']}")
-        print(f"  Total score: {best['score']}/30")
+        threshold = getattr(self.rules, "MATCH_THRESHOLD", 50)
+        matched = best["score"] >= threshold
 
-        # Expert system behavior:
-        # If crop rule is perfect (5/5), trust it even if other rules are weak.
-        if best["s3_raw"] >= 5:
-            print(f"Final: MATCH (strong crop) -> {best['target']}")
-            return {"best_match": best['target'], "confidence": best['score']}
+        lines = [f"Processing: {input_name}"]
+        for rule_result in best["rules"]:
+            lines.append(rule_result["line"])
 
-        # Normal threshold 
-        if best["score"] >= 15:
-            print(f"Final: MATCH -> {best['target']}")
-            return {"best_match": best['target'], "confidence": best['score']}
+        if matched:
+            lines.append(f"Final Score: {best['score']}/100 -> MATCH to {best['target']}")
         else:
-            print("Final: REJECTED")
-            return {"best_match": None, "confidence": best['score']}
+            lines.append(f"Final Score: {best['score']}/100 -> REJECTED")
 
+        return {
+            "input": input_name,
+            "best_match": best["target"] if matched else None,
+            "matched": matched,
+            "confidence": best["score"],
+            "rules": best["rules"],
+            "output_text": "\n".join(lines),
+        }
 
-if __name__ == "__main__":
-    print("="*50)
-    print("SimpleDetective - Prototype v0.6")
-    print("="*50)
+    def process_folder(self, folder: str, ground_truth: bool = True) -> Dict[str, Any]:
+        image_paths = []
 
-    detective = SimpleDetective()
-    detective.register_targets("originals")
+        for filename in sorted(os.listdir(folder)):
+            if filename.lower().endswith((".jpg", ".jpeg", ".png")):
+                image_paths.append(os.path.join(folder, filename))
 
-    print("\n" + "="*50)
-    print("TESTING")
-    print("="*50)
+        outputs: List[str] = []
+        results: List[Dict[str, Any]] = []
 
-    # test_images = [
-    #     "modified_images/modified_00_bright_enhanced.jpg",
-    #     "modified_images/modified_03_compressed.jpg",
-    #     "modified_images/modified_02_format_png.png",
-    #     "modified_images/modified_01_crop_75pct.jpg",
-    #     "modified_images/modified_01_crop_50pct.jpg",
-    #     "modified_images/modified_01_crop_25pct.jpg",
-    # ]
+        print(f"\nProcessing folder: {folder}")
+        print(f"Total files found: {len(image_paths)}")
 
-    # test_images = []
+        for i, path in enumerate(image_paths, start=1):
+            print(f"[{i}/{len(image_paths)}] Processing file: {os.path.basename(path)}")
+            result = self.find_best_match(path)
+            results.append(result)
+            outputs.append(result["output_text"])
 
-    # for fn in os.listdir("modified_images"):
-    #     if fn.lower().endswith((".jpg", ".jpeg", ".png")):
-    #         test_images.append(os.path.join("modified_images", fn))
+        report_text = "\n\n".join(outputs)
 
-    TEST_FOLDER = "modified_images"
-    # choose which folder to test
-    # TEST_FOLDER = "hard"
-    # TEST_FOLDER = "random"
+        summary = None
+        if ground_truth:
+            summary = self.evaluate_results(results, folder)
 
-    
-    print("\nChoose test folder:")
-    print("1 - modified_images")
-    print("2 - hard")
-    print("3 - random")
-    choice = input("Enter choice (1/2/3): ").strip()
+        return {
+            "results": results,
+            "report_text": report_text,
+            "summary": summary
+        }
 
-    if choice == "1":
-        TEST_FOLDER = "modified_images"
-    elif choice == "2":
-        TEST_FOLDER = "hard"
-    elif choice == "3":
-        TEST_FOLDER = "random"
-    else:
-        print("Invalid choice, defaulting to modified_images")
-        TEST_FOLDER = "modified_images"
+    def evaluate_results(self, results: List[Dict[str, Any]], folder_name: str) -> Dict[str, Any]:
+        folder_lower = folder_name.lower()
 
-    print(f"\nTesting folder: {TEST_FOLDER}")
+        if "random" in folder_lower:
+            total = len(results)
+            rejected = sum(1 for r in results if not r["matched"])
+            false_positives = total - rejected
+            false_positive_rate = (false_positives / total * 100.0) if total else 0.0
 
-    test_images = []
+            return {
+                "type": "random",
+                "total": total,
+                "rejected": rejected,
+                "false_positives": false_positives,
+                "false_positive_rate": false_positive_rate,
+            }
 
-    for fn in os.listdir(TEST_FOLDER):
-        if fn.lower().endswith((".jpg", ".jpeg", ".png")):
-            test_images.append(os.path.join(TEST_FOLDER, fn))
+        total = len(results)
+        correct = 0
 
-    for img in test_images:
-        if os.path.exists(img):
-            detective.find_best_match(img)
+        for r in results:
+            true_prefix = self.extract_true_original_prefix(r["input"])
+            predicted_prefix = self.extract_true_original_prefix(r["best_match"]) if r["best_match"] else None
 
-    print("\n" + "="*50)
-    print("PROTOTYPE COMPLETE!")
-    print("="*50)
+            if true_prefix is not None and predicted_prefix is not None and true_prefix == predicted_prefix:
+                correct += 1
+
+        accuracy = (correct / total * 100.0) if total else 0.0
+
+        return {
+            "type": "derived",
+            "total": total,
+            "correct": correct,
+            "accuracy": accuracy,
+        }
+
+    @staticmethod
+    def extract_true_original_prefix(filename: Optional[str]) -> Optional[str]:
+        if not filename:
+            return None
+
+        name = os.path.basename(filename).lower()
+
+        if "original_" in name:
+            idx = name.find("original_")
+            suffix = name[idx + len("original_"):]
+            digits = ""
+            for ch in suffix:
+                if ch.isdigit():
+                    digits += ch
+                else:
+                    break
+            if digits:
+                return f"original_{digits}.jpg"
+
+        if "modified_" in name:
+            idx = name.find("modified_")
+            suffix = name[idx + len("modified_"):]
+            digits = ""
+            for ch in suffix:
+                if ch.isdigit():
+                    digits += ch
+                else:
+                    break
+            if digits:
+                return f"original_{digits}.jpg"
+
+        return None
